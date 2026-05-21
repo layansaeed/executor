@@ -3,7 +3,6 @@ package sa.nrd.job.execute.service.integration;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 import sa.nrd.job.execute.constant.DynamicCallConstants;
-import sa.nrd.job.execute.exception.MaxRetryAttemptsReachedException;
 import sa.nrd.job.execute.service.job.JobConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,48 +101,6 @@ public class DynamicCallService {
     }
 
 
-//    /**
-//     * Calls the external API for the given job and NIN.
-//     * Always returns one map ready for storing.
-//     */
-//    public Map<String, Object> callApi(String jobName, Long nin) {
-//            Map<String, String> config = jobConfigService.getConfigMap(jobName);
-//
-//            String url = buildUrl(config);
-//            HttpMethod httpMethod = buildHttpMethod(config);
-//            HttpHeaders headers = buildHeaders(config);
-//            Map<String, Object> requestBody = buildRequestBody(nin);
-//            HttpEntity<Map<String, Object>> requestEntity = buildRequestEntity(headers, requestBody);
-//
-//            ResponseEntity<Map> restResponse =
-//                    restTemplate.exchange(url, httpMethod, requestEntity, Map.class);
-//
-//            logger.debug("Successfully retrieved response for jobName={} nin={}",
-//                    jobName,
-//                    nin);
-//
-//            return prepareSuccessResponse(restResponse);
-//
-//    }
-//
-//    private Map<String, Object> prepareSuccessResponse(ResponseEntity<Map> restResponse) {
-//        Map<String, Object> responseBody;
-//
-//        if (restResponse.getBody() == null) {
-//            responseBody = new LinkedHashMap<>();
-//        } else {
-//            responseBody = new LinkedHashMap<>(restResponse.getBody());
-//        }
-//
-//       // responseBody.putIfAbsent("nin", nin);
-//        responseBody.put("failure", false);
-//        responseBody.put("message", null);
-//        responseBody.put("errorCode", null);
-//        responseBody.put("statusCode", String.valueOf(restResponse.getStatusCode().value()));
-//
-//        return responseBody;
-//    }
-
     /**
      * Builds the request URL from configuration.
      */
@@ -221,21 +178,6 @@ public class DynamicCallService {
     }
 
     /**
-     * Executes the external API request.
-     * Does not swallow the exception.
-     */
-//    private ResponseEntity<Map> executeRequest(String jobName,
-//                                               Long nin,
-//                                               String url,
-//                                               HttpMethod httpMethod,
-//                                               HttpEntity<Map<String, Object>> requestEntity) {
-//        logger.info("Calling API for jobName={} url={} nin={}", jobName, url, nin);
-//        //Thread.sleep(500);
-//        return restTemplate.exchange(url, httpMethod, requestEntity, Map.class);
-//    }
-
-
-    /**
      * Returns a required configuration value.
      */
     private String getRequiredConfigValue(Map<String, String> config, String key) {
@@ -248,43 +190,4 @@ public class DynamicCallService {
         return value;
     }
 
-    //    /**
-//     * Prepares final map for error case.
-//     *
-//     * @param exception current exception
-//     * @return error response map
-//     */
-//    public Map<String, Object> prepareErrorResponse(Exception exception) {
-//        Map<String, Object> responseBody = new LinkedHashMap<>();
-//
-//        Throwable actualException = exception;
-//
-//        if (exception instanceof RetryableIntegrationException && exception.getCause() != null) {
-//            actualException = exception.getCause();
-//        }
-//
-//        //RetryableIntegrationException -> cause = HttpServerErrorException
-//        //unwraps exception and sees the real cause
-//
-//        //if (actualException instanceof HttpStatusCodeException httpEx) {
-//        if (actualException instanceof HttpClientErrorException
-//                || actualException instanceof HttpServerErrorException) {
-//
-//            HttpStatusCodeException httpEx = (HttpStatusCodeException) actualException;
-//            responseBody.put("failure", true);
-//            responseBody.put("message", httpEx.getResponseBodyAsString());
-//            responseBody.put("statusCode", String.valueOf(httpEx.getRawStatusCode()));
-//            responseBody.put("errorCode", null);
-//            return responseBody;
-//        }
-//
-//        responseBody.put("failure", true);
-//        responseBody.put("message", actualException.getMessage());
-//        responseBody.put("statusCode", null);
-//        responseBody.put("errorCode", null);
-//
-//        return responseBody;
-//    }
-//
-//
 }

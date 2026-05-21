@@ -34,7 +34,7 @@ public class RetryablePageExecutorService {
 
     /**
      * Executes API calls using a list of NINs.
-     *
+     * <p>
      * If retryable error happens, Spring Retry calls this method again.
      * Because currentIndex is already increased, the next retry uses the next NIN.
      */
@@ -58,12 +58,6 @@ public class RetryablePageExecutorService {
                                     HttpHeaders headers,
                                     List<Map<String, Object>> responses) {
 
-//        try {
-//            Thread.sleep(30000);
-//
-//        }catch (Exception ex){
-//            ex.printStackTrace();
-//        }
         //end of list (page) do not crash with IndexOutOfBoundsException and return false
         //If the index already reached the list size, we return false instead of throwing IndexOutOfBoundsException
         if (currentIndex.get() >= nins.size()) { //indexes: 0-> 24. no 25 same as list size
@@ -73,34 +67,6 @@ public class RetryablePageExecutorService {
 
         //retryable executor takes the current NIN and increments the index before the API call
         //currentIndex.get() = same index so same nin
-        /**
-         * 1. get current value first
-         * 2. use it to read NIN
-         * 3. then increase the index
-         * nins.get(0) is used
-         * then currentIndex becomes 1
-         *
-         * If NIN at index 0 fails and retry happens:
-         * Before attempt 2:
-         * currentIndex = 1
-         *
-         * During attempt 2:
-         * nin = nins.get(1)
-         * currentIndex becomes 2
-         * call API for nins[1]
-         *
-         * attempt 3 : index=2
-         * executeWithRetry called
-         * take NIN index 2
-         * currentIndex becomes 3
-         * API success
-         * return true
-         * back to while loop with index 3
-         * executeWithRetry called again
-         * take NIN index 3
-         * currentIndex becomes 4
-         * API called
-         */
         Long nin = nins.get(currentIndex.getAndIncrement());
 
         // If the call fails with a retryable error, Spring retries the same method,
@@ -314,87 +280,5 @@ public class RetryablePageExecutorService {
         return nins.get(lastIndex);
     }
 
-    /**
-     * Marks last error response as max retry reached.
-     */
-    private void markLastResponseAsMaxAttemptsReached(List<Map<String, Object>> responses) {
-        if (responses == null || responses.isEmpty()) {
-            return;
-        }
-
-        Map<String, Object> lastResponse = responses.get(responses.size() - 1);
-        Object oldMessage = lastResponse.get("message");
-
-        lastResponse.put("failure", true);
-        lastResponse.put("message", "Max retry attempts reached. Last error: " + oldMessage);
-    }
-
-//
-//    /**
-//     * Prepares final map for error case
-//     * @param exception current exception
-//     * @return error response map
-//     * Cons of manual way
-//     * 1. More code.
-//     * 2. You check the type, then manually cast.
-//     * 3. More chance to cast wrong by mistake.
-//     * example if (e instanceof HttpClientErrorException) {
-//     *     HttpServerErrorException httpEx = (HttpServerErrorException) e; // runtime error
-//     * }
-//     * 4. Less readable
-//     */
-//    public Map<String, Object> prepareErrorResponse(Exception exception) {
-//        Map<String, Object> responseBody = new LinkedHashMap<>();
-//
-//        //pattern matching: check type(if true) -> create httpEx automatically & cast then use httpEx in one line
-//        if (exception instanceof HttpStatusCodeException httpEx) {
-//
-//            //normal way:  check + manual cast
-////        if (exception instanceof HttpClientErrorException
-////                || exception instanceof HttpServerErrorException) {
-////            HttpStatusCodeException httpEx = (HttpStatusCodeException) exception;
-//            responseBody.put("failure", true);
-//            responseBody.put("message", httpEx.getResponseBodyAsString());
-//            responseBody.put("statusCode", String.valueOf(httpEx.getRawStatusCode()));
-//            responseBody.put("errorCode", null);
-//            return responseBody;
-//        }
-//
-//        responseBody.put("failure", true);
-//        responseBody.put("message", exception.getMessage());
-//        responseBody.put("statusCode", null);
-//        responseBody.put("errorCode", null);
-//
-//        return responseBody;
-//    }
 }
-//
-//    /**
-//     * Prepares final map for error case.
-//     *
-//     * @param exception current exception
-//     * @return error response map
-//     */
-//    public Map<String, Object> prepareErrorResponse(Exception exception) {
-//        Map<String, Object> responseBody = new LinkedHashMap<>();
-//
-//        //if (exception instanceof HttpStatusCodeException httpEx) {
-//        if (exception instanceof HttpClientErrorException
-//                || exception instanceof HttpServerErrorException) {
-//
-//            HttpStatusCodeException httpEx = (HttpStatusCodeException) exception;
-//            responseBody.put("failure", true);
-//            responseBody.put("message", httpEx.getResponseBodyAsString());
-//            responseBody.put("statusCode", String.valueOf(httpEx.getRawStatusCode()));
-//            responseBody.put("errorCode", null);
-//            return responseBody;
-//        }
-//
-//        responseBody.put("failure", true);
-//        responseBody.put("message", exception.getMessage());
-//        responseBody.put("statusCode", null);
-//        responseBody.put("errorCode", null);
-//
-//        return responseBody;
-//    }
 
