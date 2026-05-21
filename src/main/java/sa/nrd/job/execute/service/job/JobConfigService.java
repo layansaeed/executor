@@ -13,7 +13,6 @@ public class JobConfigService {
 
     /**
      * Creates the service with the required property source dependency.
-     *
      * @param propertySourceConfig configuration property source
      */
     public JobConfigService(Config.PropertySourceConfig propertySourceConfig) {

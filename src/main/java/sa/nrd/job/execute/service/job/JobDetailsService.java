@@ -8,10 +8,8 @@ import org.springframework.stereotype.Service;
 public class JobDetailsService {
 
     private final JobDetailsJpaRepository jobDetailsRepository;
-
     /**
      * Creates the service with the required repository dependency.
-     *
      * @param jobDetailsRepository repository for job details
      */
     public JobDetailsService(JobDetailsJpaRepository jobDetailsRepository) {
@@ -20,7 +18,6 @@ public class JobDetailsService {
 
     /**
      * Returns the job details for the given job name.
-     *
      * @param jobName job identifier
      * @return job details entity
      */

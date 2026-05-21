@@ -171,16 +171,32 @@ public class BeneficiaryBatchProcessorService {
 
                 return rows;
 
-            } catch (Exception exception) {
+            } catch (MaxRetryAttemptsReachedException exception) {
+                List<Map<String, Object>> rows = new ArrayList<>();
+
+                for (Map<String, Object> response : exception.getResponses()) {
+                    rows.add(toEntityRow(entityDefinition, response));
+                }
+
+                if (!rows.isEmpty()) {
+                    genericEntityRepository.insertAllRows(entityDefinition, rows);
+
+                    logger.info("Saved {} failed row(s) for jobName={} in page={} before stopping job",
+                            rows.size(),
+                            jobName,
+                            pageNumber);
+                }
+
+                throw exception;
+            }catch (Exception exception) {
                 logger.error("Failed processing page={} for jobName={}. Error={}",
                         pageNumber, jobName, exception.getMessage(), exception);
 
                 return new ArrayList<>();
             }
+
         }, executorService));
-//catch (MaxRetryAttemptsReachedException exception) {
-//            throw exception;
-//        }
+
         /**
          *  CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
          *  or try / catch

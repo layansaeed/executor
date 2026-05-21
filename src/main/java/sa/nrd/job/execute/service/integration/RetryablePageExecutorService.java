@@ -58,12 +58,6 @@ public class RetryablePageExecutorService {
                                     HttpHeaders headers,
                                     List<Map<String, Object>> responses) {
 
-//        try {
-//            Thread.sleep(30000);
-//
-//        }catch (Exception ex){
-//            ex.printStackTrace();
-//        }
         //end of list (page) do not crash with IndexOutOfBoundsException and return false
         //If the index already reached the list size, we return false instead of throwing IndexOutOfBoundsException
         if (currentIndex.get() >= nins.size()) { //indexes: 0-> 24. no 25 same as list size

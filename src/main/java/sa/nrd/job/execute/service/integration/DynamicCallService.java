@@ -23,12 +23,12 @@ public class DynamicCallService {
 
     public DynamicCallService(RetryablePageExecutorService retryablePageExecutorService, JobConfigService jobConfigService, RestTemplate restTemplate) {
         this.retryablePageExecutorService = retryablePageExecutorService;
-
         this.jobConfigService = jobConfigService;
         this.restTemplate = restTemplate;
     }
-    //when any retryable attempt success return here to call to another nin
-    //just return false and stop the page after all max attempts failure
+
+    //when any retryable attempt success return here to call to another [page of nin]
+    //stop the page after return false all max attempts failure /return success: finish all attempts
     public List<Map<String, Object>> callApis(String jobName, List<Long> nins) {
 
         try {
@@ -43,7 +43,7 @@ public class DynamicCallService {
             AtomicInteger currentIndex = new AtomicInteger(0);
 
             //first: currentIndex=0 & responses = []
-            //nins = [1 nin up to 25 NINs]
+            //one page-> nins = [1 nin up to 25 NINs]
 
             //end of list or return false (all attempts failure)
             while (currentIndex.get() < nins.size()) {
@@ -58,21 +58,26 @@ public class DynamicCallService {
                                 responses
                         );
 
-                if (!shouldContinue) {
-                    break;
-                    //stop the currect page and responses go back to processpage
-                    // that has failure rows them mapping and insert
-                }
 //                if (!shouldContinue) {
-//                    //When recover returns false, stop everything immediately.
-//                    throw new MaxRetryAttemptsReachedException(
-//                            "Max retry attempts reached for jobName: " + jobName
-//                    );
+//                    break;
+//                    //stop the current page and responses go back to processpage
+//                    // that has failure rows them mapping and insert
 //                }
+                // When @Recover returns false, throw a fatal exception to stop the whole job.
+                if (!shouldContinue) {
+                    throw new MaxRetryAttemptsReachedException(
+                            "Max retry attempts reached for jobName: " + jobName,
+                            responses
+                    );
+                }
             }
 
             return responses;
 
+        } catch (MaxRetryAttemptsReachedException exception) {
+            // Do not convert this to local error response.
+            // This exception is used to stop the whole job.
+            throw exception;
         } catch (Exception exception) {
             logger.debug("Failed before/while calling APIs for jobName [{}] exception [{}]",
                     jobName,
