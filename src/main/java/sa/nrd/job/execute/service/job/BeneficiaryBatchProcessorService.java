@@ -1,11 +1,5 @@
 package sa.nrd.job.execute.service.job;
 
-import sa.nrd.job.execute.model.beneficiary.BeneficiaryEntity;
-import sa.nrd.job.execute.model.manage.EntityDefinition;
-import sa.nrd.job.execute.repository.BeneficiaryJpaRepository;
-import sa.nrd.job.execute.repository.GenericEntityRepository;
-import sa.nrd.job.execute.service.bean.EntityDefinitionRegistry;
-import sa.nrd.job.execute.service.integration.DynamicCallService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,12 +7,20 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import sa.nrd.job.execute.exception.MaxRetryAttemptsReachedException;
+import sa.nrd.job.execute.model.beneficiary.BeneficiaryEntity;
+import sa.nrd.job.execute.model.manage.EntityDefinition;
+import sa.nrd.job.execute.repository.BeneficiaryJpaRepository;
+import sa.nrd.job.execute.repository.GenericEntityRepository;
+import sa.nrd.job.execute.service.bean.EntityDefinitionRegistry;
+import sa.nrd.job.execute.service.integration.DynamicCallService;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -64,20 +66,24 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Processes all records within the full input range.
+     * Processes all records within the given range.
      *
      * @param jobName job name used to load configuration
      * @param start range start value
      * @param end range end value
      */
-    public void processByRange(String jobName, Long start, Long end) {
+    public void processByRange(String jobName,
+                               Long start,
+                               Long end) {
         validateJobName(jobName);
         validateRange(start, end);
 
         EntityDefinition entityDefinition = entityDefinitionRegistry.get(jobName);
 
         logger.info("Starting parallel processing for jobName={} rangeStart={} rangeEnd={}",
-                jobName, start, end);
+                jobName,
+                start,
+                end);
 
         long currentRangeStart = start;
 
@@ -88,15 +94,20 @@ public class BeneficiaryBatchProcessorService {
                 currentRangeEnd = end;
             }
 
-            processChunk(jobName,
+            processChunk(
+                    jobName,
                     entityDefinition,
                     currentRangeStart,
-                    currentRangeEnd);
+                    currentRangeEnd
+            );
+
             currentRangeStart = currentRangeEnd + 1;
         }
 
         logger.info("Completed parallel processing for jobName={} rangeStart={} rangeEnd={}",
-                jobName, start, end);
+                jobName,
+                start,
+                end);
     }
 
     /**
@@ -115,104 +126,107 @@ public class BeneficiaryBatchProcessorService {
         int pageNumber = 0;
 
         logger.info("Processing range window {} - {} for jobName={}",
-                rangeStart, rangeEnd, jobName);
+                rangeStart,
+                rangeEnd,
+                jobName);
 
         while (true) {
             Page<BeneficiaryEntity> beneficiaryPage =
                     beneficiaryRepository.findBeneficiaries(
-                    PageRequest.of(pageNumber, databaseChunkSize),
-                    rangeStart,
-                    rangeEnd
-            );
+                            PageRequest.of(pageNumber, databaseChunkSize),
+                            rangeStart,
+                            rangeEnd
+                    );
 
             if (!beneficiaryPage.hasContent()) {
                 logger.info("No more beneficiaries in range window {} - {} for jobName={}",
-                        rangeStart, rangeEnd, jobName);
+                        rangeStart,
+                        rangeEnd,
+                        jobName);
                 break;
             }
 
-            processPage(jobName,
+            processPage(
+                    jobName,
                     entityDefinition,
                     beneficiaryPage,
-                    pageNumber);
+                    pageNumber
+            );
+
             pageNumber++;
         }
     }
 
+    /**
+     * Processes one DB page.
+     *
+     * One CompletableFuture handles the full page list of NINs.
+     * If max retry attempts are reached, the current page failure rows are saved first,
+     * then the exception is thrown again to stop the whole job.
+     *
+     * @param jobName job name used for processing
+     * @param entityDefinition entity definition for the target table
+     * @param beneficiaryPage current beneficiary page
+     * @param pageNumber current page number
+     */
     private void processPage(String jobName,
                              EntityDefinition entityDefinition,
                              Page<BeneficiaryEntity> beneficiaryPage,
                              int pageNumber) {
 
         logger.info("Processing page {} for jobName={} with {} beneficiary record(s)",
-                pageNumber, jobName, beneficiaryPage.getNumberOfElements());
+                pageNumber,
+                jobName,
+                beneficiaryPage.getNumberOfElements());
 
-        List<Long> nins = new ArrayList<>();
+        List<Long> nins = getNins(beneficiaryPage);
 
-        for (BeneficiaryEntity beneficiary : beneficiaryPage.getContent()) {
-            nins.add(beneficiary.getNin());
-        }
+        CompletableFuture<List<Map<String, Object>>> pageFuture =
+                CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<Map<String, Object>> responses =
+                                dynamicCallService.callApis(jobName, nins);
 
-        //one CompletableFuture = one page list of NINs
-        List<CompletableFuture<List<Map<String, Object>>>> futures = new ArrayList<>();
+                        return toEntityRows(entityDefinition, responses);
 
-        futures.add(CompletableFuture.supplyAsync(() -> {
-            try {
-                List<Map<String, Object>> responses =
-                        dynamicCallService.callApis(jobName, nins);
+                    } catch (MaxRetryAttemptsReachedException exception) {
+                        throw exception;
 
-                List<Map<String, Object>> rows = new ArrayList<>();
+                    } catch (Exception exception) {
+                        logger.error("Failed processing page={} for jobName={}. Error={}",
+                                pageNumber,
+                                jobName,
+                                exception.getMessage(),
+                                exception);
 
-                for (Map<String, Object> response : responses) {
-                    rows.add(toEntityRow(entityDefinition, response));
-                }
+                        return new ArrayList<>();
+                    }
+                }, executorService);
 
-                return rows;
+        try {
+            List<Map<String, Object>> pageResults = pageFuture.join();
+            saveRows(jobName, entityDefinition, pageNumber, pageResults);
 
-            } catch (Exception exception) {
-                logger.error("Failed processing page={} for jobName={}. Error={}",
-                        pageNumber, jobName, exception.getMessage(), exception);
+        } catch (CompletionException exception) {
+            MaxRetryAttemptsReachedException maxRetryException =
+                    getMaxRetryAttemptsReachedException(exception);
 
-                return new ArrayList<>();
+            if (maxRetryException == null) {
+                throw exception;
             }
-        }, executorService));
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            List<Map<String, Object>> failedRows =
+                    toEntityRows(entityDefinition, maxRetryException.getResponses());
 
-        List<Map<String, Object>> pageResults = new ArrayList<>();
+            saveRows(jobName, entityDefinition, pageNumber, failedRows);
 
-        for (CompletableFuture<List<Map<String, Object>>> future : futures) {
-            List<Map<String, Object>> result = future.join();
+            logger.error("Max retry attempts reached for jobName={} in page={}. Current page rows saved, stopping job.",
+                    jobName,
+                    pageNumber,
+                    maxRetryException);
 
-            if (result != null && !result.isEmpty()) {
-                pageResults.addAll(result);
-            }
+            throw maxRetryException;
         }
-
-        if (!pageResults.isEmpty()) {
-            genericEntityRepository.insertAllRows(entityDefinition, pageResults);
-
-            logger.info("Saved {} row(s) for jobName={} in page={}",
-                    pageResults.size(), jobName, pageNumber);
-        }
-    }
-
-    /**
-     * Maps API response values to entity fields.
-     *
-     * @param entityDefinition entity definition that contains field mapping
-     * @param response API response body
-     * @return mapped row
-     */
-    private Map<String, Object> toEntityRow(EntityDefinition entityDefinition,
-                                            Map<String, Object> response) {
-        Map<String, Object> row = new LinkedHashMap<>();
-
-        for (String fieldName : entityDefinition.getFieldMapping().keySet()) {
-            row.put(fieldName, response.get(fieldName));
-        }
-
-        return row;
     }
 
     /**
@@ -234,6 +248,7 @@ public class BeneficiaryBatchProcessorService {
 
     /**
      * Processes all beneficiaries page by page.
+     *
      * @param jobName job name used for processing
      * @param entityDefinition entity definition for the target table
      */
@@ -243,20 +258,109 @@ public class BeneficiaryBatchProcessorService {
 
         while (true) {
             Page<BeneficiaryEntity> beneficiaryPage =
-                    beneficiaryRepository.findAll(PageRequest.of(pageNumber,
-                            databaseChunkSize));
+                    beneficiaryRepository.findAll(
+                            PageRequest.of(pageNumber, databaseChunkSize)
+                    );
 
             if (!beneficiaryPage.hasContent()) {
                 logger.info("No more beneficiaries found for jobName={}", jobName);
                 break;
             }
 
-            processPage(jobName,
+            processPage(
+                    jobName,
                     entityDefinition,
                     beneficiaryPage,
-                    pageNumber);
+                    pageNumber
+            );
+
             pageNumber++;
         }
+    }
+
+    /**
+     * Extracts NINs from the current page.
+     */
+    private List<Long> getNins(Page<BeneficiaryEntity> beneficiaryPage) {
+        List<Long> nins = new ArrayList<>();
+
+        for (BeneficiaryEntity beneficiary : beneficiaryPage.getContent()) {
+            nins.add(beneficiary.getNin());
+        }
+
+        return nins;
+    }
+
+    /**
+     * Maps API response list to entity rows.
+     */
+    private List<Map<String, Object>> toEntityRows(EntityDefinition entityDefinition,
+                                                   List<Map<String, Object>> responses) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        if (responses == null || responses.isEmpty()) {
+            return rows;
+        }
+
+        for (Map<String, Object> response : responses) {
+            rows.add(toEntityRow(entityDefinition, response));
+        }
+
+        return rows;
+    }
+
+    /**
+     * Maps API response values to entity fields.
+     *
+     * @param entityDefinition entity definition that contains field mapping
+     * @param response API response body
+     * @return mapped row
+     */
+    private Map<String, Object> toEntityRow(EntityDefinition entityDefinition,
+                                            Map<String, Object> response) {
+        Map<String, Object> row = new LinkedHashMap<>();
+
+        for (String fieldName : entityDefinition.getFieldMapping().keySet()) {
+            row.put(fieldName, response.get(fieldName));
+        }
+
+        return row;
+    }
+
+    /**
+     * Saves rows if the list is not empty.
+     */
+    private void saveRows(String jobName,
+                          EntityDefinition entityDefinition,
+                          int pageNumber,
+                          List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+
+        genericEntityRepository.insertAllRows(entityDefinition, rows);
+
+        logger.info("Saved {} row(s) for jobName={} in page={}",
+                rows.size(),
+                jobName,
+                pageNumber);
+    }
+
+    /**
+     * Finds MaxRetryAttemptsReachedException inside CompletionException chain.
+     */
+    private MaxRetryAttemptsReachedException getMaxRetryAttemptsReachedException(Throwable throwable) {
+        Throwable current = throwable;
+
+        while (current != null) {
+            if (current instanceof MaxRetryAttemptsReachedException maxRetryException) {
+                return maxRetryException;
+            }
+
+            current = current.getCause();
+        }
+
+        return null;
     }
 
     /**
@@ -276,7 +380,8 @@ public class BeneficiaryBatchProcessorService {
      * @param start range start value
      * @param end range end value
      */
-    private void validateRange(Long start, Long end) {
+    private void validateRange(Long start,
+                               Long end) {
         if (start == null || end == null) {
             throw new IllegalArgumentException("Range start and end must not be null");
         }
@@ -285,12 +390,13 @@ public class BeneficiaryBatchProcessorService {
             throw new IllegalArgumentException("Range start must not be greater than end");
         }
     }
+
     /**
      * Shuts down the executor service before bean destruction.
      */
     @PreDestroy
     public void shutdown() {
         executorService.shutdown();
-        logger.info("RangePaginationProcessorService executor service shutdown completed");
+        logger.info("BeneficiaryBatchProcessorService executor service shutdown completed");
     }
 }

@@ -3,6 +3,7 @@ package sa.nrd.job.execute.service.integration;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 import sa.nrd.job.execute.constant.DynamicCallConstants;
+import sa.nrd.job.execute.exception.MaxRetryAttemptsReachedException;
 import sa.nrd.job.execute.service.job.JobConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,13 +19,11 @@ public class DynamicCallService {
 
     private final RetryablePageExecutorService retryablePageExecutorService;
     private final JobConfigService jobConfigService;
-    private final RestTemplate restTemplate;
 
-    public DynamicCallService(RetryablePageExecutorService retryablePageExecutorService, JobConfigService jobConfigService, RestTemplate restTemplate) {
+    public DynamicCallService(RetryablePageExecutorService retryablePageExecutorService, JobConfigService jobConfigService) {
         this.retryablePageExecutorService = retryablePageExecutorService;
 
         this.jobConfigService = jobConfigService;
-        this.restTemplate = restTemplate;
     }
     //when any retryable attempt success return here to call to another nin
     //just return false and stop the page after all max attempts failure
@@ -57,23 +56,26 @@ public class DynamicCallService {
                                 responses
                         );
 
-                if (!shouldContinue) {
-                    break;
-                    //stop the currect page and responses go back to processpage
-                    // that has failure rows them mapping and insert
-                }
 //                if (!shouldContinue) {
-//                    //When recover returns false, stop everything immediately.
-//                    throw new MaxRetryAttemptsReachedException(
-//                            "Max retry attempts reached for jobName: " + jobName
-//                    );
+//                    break;
+//                    //stop the currect page and responses go back to processpage
+//                    // that has failure rows them mapping and insert
 //                }
+               if (!shouldContinue) {
+                    throw new MaxRetryAttemptsReachedException(
+                            "Max retry attempts reached for jobName: " + jobName,
+                            responses
+                    );
+                }
             }
 
             return responses;
 
+        } catch (MaxRetryAttemptsReachedException exception) {
+            throw exception;
+
         } catch (Exception exception) {
-            logger.debug("Failed before/while calling APIs for jobName [{}] exception [{}]",
+            logger.debug("Failed before/while calling APIs for jobName [{}]. Error [{}]",
                     jobName,
                     exception.getMessage());
 
