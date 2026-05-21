@@ -67,34 +67,6 @@ public class RetryablePageExecutorService {
 
         //retryable executor takes the current NIN and increments the index before the API call
         //currentIndex.get() = same index so same nin
-        /**
-         * 1. get current value first
-         * 2. use it to read NIN
-         * 3. then increase the index
-         * nins.get(0) is used
-         * then currentIndex becomes 1
-         *
-         * If NIN at index 0 fails and retry happens:
-         * Before attempt 2:
-         * currentIndex = 1
-         *
-         * During attempt 2:
-         * nin = nins.get(1)
-         * currentIndex becomes 2
-         * call API for nins[1]
-         *
-         * attempt 3 : index=2
-         * executeWithRetry called
-         * take NIN index 2
-         * currentIndex becomes 3
-         * API success
-         * return true
-         * back to while loop with index 3
-         * executeWithRetry called again
-         * take NIN index 3
-         * currentIndex becomes 4
-         * API called
-         */
         Long nin = nins.get(currentIndex.getAndIncrement());
 
         // If the call fails with a retryable error, Spring retries the same method,
