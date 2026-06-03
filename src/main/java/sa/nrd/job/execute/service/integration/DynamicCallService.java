@@ -3,7 +3,6 @@ package sa.nrd.job.execute.service.integration;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 import sa.nrd.job.execute.constant.DynamicCallConstants;
-import sa.nrd.job.execute.exception.MaxRetryAttemptsReachedException;
 import sa.nrd.job.execute.service.job.JobConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +18,10 @@ public class DynamicCallService {
 
     private final RetryablePageExecutorService retryablePageExecutorService;
     private final JobConfigService jobConfigService;
+
+    //Use internal flags inside the response list
+    private static final String STOP_JOB_KEY = "__stopJob";
+    private static final String STOP_REASON_KEY = "__stopReason";
 
     public DynamicCallService(RetryablePageExecutorService retryablePageExecutorService, JobConfigService jobConfigService) {
         this.retryablePageExecutorService = retryablePageExecutorService;
@@ -57,27 +60,14 @@ public class DynamicCallService {
                                 headers,
                                 responses
                         );
-
-//                if (!shouldContinue) {
-//                    break;
-//                    //stop the currect page and responses go back to processpage
-//                    // that has failure rows them mapping and insert
-//                }
-               if (!shouldContinue) {
-                   //return responses: they contain the failed 25 rows so pass responses inside the exception to store them
-                    throw new MaxRetryAttemptsReachedException(
-                            "Max retry attempts reached for jobName: " + jobName,
-                            responses
-                    );
-                    //processPage saves failed rows then job stops
+                if (!shouldContinue) {
+                    markStopJob(responses, jobName);
+                    break;
                 }
             }
 
             // return response when go out of loop by end of list
             return responses;
-
-        } catch (MaxRetryAttemptsReachedException exception) {
-            throw exception;
 
         } catch (Exception exception) {
             logger.debug("Failed before/while calling APIs for jobName [{}]. Error [{}]",
@@ -89,6 +79,26 @@ public class DynamicCallService {
 
             return responses;
         }
+    }
+
+    private void markStopJob(List<Map<String, Object>> responses, String jobName) {
+        String reason = "Max retry attempts reached for jobName: " + jobName;
+
+        if (responses == null || responses.isEmpty()) {
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("failure", true);
+            response.put("message", reason);
+            response.put("statusCode", null);
+            response.put("errorCode", null);
+            response.put(STOP_JOB_KEY, true);
+            response.put(STOP_REASON_KEY, reason);
+            responses.add(response);
+            return;
+        }
+
+        Map<String, Object> lastResponse = responses.get(responses.size() - 1);
+        lastResponse.put(STOP_JOB_KEY, true);
+        lastResponse.put(STOP_REASON_KEY, reason);
     }
 
    /**

@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import sa.nrd.job.execute.exception.MaxRetryAttemptsReachedException;
 import sa.nrd.job.execute.model.beneficiary.BeneficiaryEntity;
 import sa.nrd.job.execute.model.manage.EntityDefinition;
 import sa.nrd.job.execute.repository.BeneficiaryJpaRepository;
@@ -27,6 +26,9 @@ import java.util.concurrent.Executors;
 public class BeneficiaryBatchProcessorService {
 
     private final Logger logger = LoggerFactory.getLogger(this.getClass().getName());
+
+    private static final String STOP_JOB_KEY = "__stopJob";
+    private static final String STOP_REASON_KEY = "__stopReason";
 
     private final ExecutorService executorService;
     private final int databaseChunkSize;
@@ -168,37 +170,14 @@ public class BeneficiaryBatchProcessorService {
                 jobName,
                 beneficiaryPage.getNumberOfElements());
 
-        //gets all NINs from the page
         List<Long> nins = getNins(beneficiaryPage);
 
         CompletableFuture<List<Map<String, Object>>> pageFuture =
                 CompletableFuture.supplyAsync(() -> {
                     try {
-                        List<Map<String, Object>> responses =
-                                dynamicCallService.callApis(jobName, nins);
-
-                        return toEntityRows(entityDefinition, responses);
-
-                    } catch (MaxRetryAttemptsReachedException exception) {
-                        // get failed responses from exception
-                        List<Map<String, Object>> failedRows =
-                                toEntityRows(entityDefinition, exception.getResponses());
-
-                        //    map them to DB rows
-                        //    save them into DB (save current page)
-                        saveRows(jobName, entityDefinition, pageNumber, failedRows);
-
-                        logger.warn("Max retry attempts reached for jobName={} in page={}. Saved {} failed row(s), stopping job.",
-                                jobName,
-                                pageNumber,
-                                failedRows.size());
-
-                        //throw exception again to stop the whole job
-                        //then kill the job, do not continue next page & do not continue next range
-                        throw exception;
+                        return dynamicCallService.callApis(jobName, nins);
 
                     } catch (Exception exception) {
-                       // if (exception instanceof MaxRetryAttemptsReachedException maxRetryException) {}
                         logger.error("Failed processing page={} for jobName={}. Error={}",
                                 pageNumber,
                                 jobName,
@@ -208,24 +187,57 @@ public class BeneficiaryBatchProcessorService {
                         return new ArrayList<>();
                     }
                 }, executorService);
-        //After creating the CompletableFuture
-        //normal case:
-        //callApis returns responses
-        //responses mapped to rows
-        //join returns pageResults
-        //saveRows saves normal page rows
 
-        //Max retry case:
-        //callApis throws MaxRetryAttemptsReachedException
-        //catch saves failed rows
-        //catch throws exception again
-        //pageFuture.join() stops
-        //outer job stops
-        List<Map<String, Object>> pageResults = pageFuture.join();
+        List<Map<String, Object>> responses = pageFuture.join();
+
+        List<Map<String, Object>> pageResults =
+                toEntityRows(entityDefinition, responses);
 
         saveRows(jobName, entityDefinition, pageNumber, pageResults);
+
+        if (shouldStopJob(responses)) {
+            String reason = getStopReason(responses);
+
+            logger.warn("Stopping job after saving page={} for jobName={}. Reason={}",
+                    pageNumber,
+                    jobName,
+                    reason);
+
+            throw new IllegalStateException(reason);
+        }
     }
 
+    private boolean shouldStopJob(List<Map<String, Object>> responses) {
+        if (responses == null || responses.isEmpty()) {
+            return false;
+        }
+
+        for (Map<String, Object> response : responses) {
+            Object stopJob = response.get(STOP_JOB_KEY);
+
+            if (Boolean.TRUE.equals(stopJob)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private String getStopReason(List<Map<String, Object>> responses) {
+        if (responses == null || responses.isEmpty()) {
+            return "Job stopped";
+        }
+
+        for (Map<String, Object> response : responses) {
+            Object reason = response.get(STOP_REASON_KEY);
+
+            if (reason != null && !String.valueOf(reason).trim().isEmpty()) {
+                return String.valueOf(reason);
+            }
+        }
+
+        return "Max retry attempts reached";
+    }
     /**
      * Processes all beneficiaries without range filtering.
      *
