@@ -168,6 +168,7 @@ public class BeneficiaryBatchProcessorService {
                 jobName,
                 beneficiaryPage.getNumberOfElements());
 
+        //gets all NINs from the page
         List<Long> nins = getNins(beneficiaryPage);
 
         CompletableFuture<List<Map<String, Object>>> pageFuture =
@@ -179,9 +180,12 @@ public class BeneficiaryBatchProcessorService {
                         return toEntityRows(entityDefinition, responses);
 
                     } catch (MaxRetryAttemptsReachedException exception) {
+                        // get failed responses from exception
                         List<Map<String, Object>> failedRows =
                                 toEntityRows(entityDefinition, exception.getResponses());
 
+                        //    map them to DB rows
+                        //    save them into DB (save current page)
                         saveRows(jobName, entityDefinition, pageNumber, failedRows);
 
                         logger.warn("Max retry attempts reached for jobName={} in page={}. Saved {} failed row(s), stopping job.",
@@ -189,6 +193,8 @@ public class BeneficiaryBatchProcessorService {
                                 pageNumber,
                                 failedRows.size());
 
+                        //throw exception again to stop the whole job
+                        //then kill the job, do not continue next page & do not continue next range
                         throw exception;
 
                     } catch (Exception exception) {
@@ -202,7 +208,19 @@ public class BeneficiaryBatchProcessorService {
                         return new ArrayList<>();
                     }
                 }, executorService);
+        //After creating the CompletableFuture
+        //normal case:
+        //callApis returns responses
+        //responses mapped to rows
+        //join returns pageResults
+        //saveRows saves normal page rows
 
+        //Max retry case:
+        //callApis throws MaxRetryAttemptsReachedException
+        //catch saves failed rows
+        //catch throws exception again
+        //pageFuture.join() stops
+        //outer job stops
         List<Map<String, Object>> pageResults = pageFuture.join();
 
         saveRows(jobName, entityDefinition, pageNumber, pageResults);

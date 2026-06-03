@@ -30,20 +30,22 @@ public class DynamicCallService {
     public List<Map<String, Object>> callApis(String jobName, List<Long> nins) {
 
         try {
+            //For the page, build URL/method/headers one time only
             Map<String, String> config = jobConfigService.getConfigMap(jobName);
 
             String url = buildUrl(config);
             HttpMethod httpMethod = buildHttpMethod(config);
             HttpHeaders headers = buildHeaders(config);
 
+            //collects success/failure rows in memory
             List<Map<String, Object>> responses = new ArrayList<>();
-            //object mutable
+            //object mutable: points to which NIN we should call now
             AtomicInteger currentIndex = new AtomicInteger(0);
 
             //first: currentIndex=0 & responses = []
             //nins = [1 nin up to 25 NINs]
 
-            //end of list or return false (all attempts failure)
+            //go out of loop by end of list or @Recover return false (all attempts failure)
             while (currentIndex.get() < nins.size()) {
                 boolean shouldContinue =
                         retryablePageExecutorService.executeWithRetry(
@@ -62,13 +64,16 @@ public class DynamicCallService {
 //                    // that has failure rows them mapping and insert
 //                }
                if (!shouldContinue) {
+                   //return responses: they contain the failed 25 rows so pass responses inside the exception to store them
                     throw new MaxRetryAttemptsReachedException(
                             "Max retry attempts reached for jobName: " + jobName,
                             responses
                     );
+                    //processPage saves failed rows then job stops
                 }
             }
 
+            // return response when go out of loop by end of list
             return responses;
 
         } catch (MaxRetryAttemptsReachedException exception) {
@@ -85,7 +90,6 @@ public class DynamicCallService {
             return responses;
         }
     }
-
 
    /**
      * Handles errors that happen before reaching the retryable API executor,

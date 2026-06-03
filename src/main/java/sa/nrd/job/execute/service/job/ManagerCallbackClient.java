@@ -30,12 +30,12 @@ public class ManagerCallbackClient {
      * Runs after Executor application is fully ready.
      * It notifies Manager that this Executor server is available.
      */
-    @EventListener(ApplicationReadyEvent.class)
-    public void notifyManagerWhenApplicationReady() {
-        logger.info("Executor started. serverPort={}", serverPort);
-
-        notifyExecutorAvailable(serverPort);
-    }
+//    @EventListener(ApplicationReadyEvent.class)
+//    public void notifyManagerWhenApplicationReady() {
+//        logger.info("Executor started. serverPort={}", serverPort);
+//
+//        notifyExecutorAvailable(serverPort);
+//    }
 
     /**
      * Notifies Manager that this Executor server is available.

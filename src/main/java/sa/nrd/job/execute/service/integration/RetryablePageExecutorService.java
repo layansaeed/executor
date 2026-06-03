@@ -90,13 +90,19 @@ public class RetryablePageExecutorService {
                     nin);
 
             return true;
+        //save success response in memory
+            //return true to callApis
+            //callApis continues next NIN
 
         } catch (Exception exception) {
             //add new failure row into list then throw exception
+            //Even if the API failed, we save an error response in memory first.
             responses.add(prepareErrorResponse(nin, exception));
 
-            //Inside the catch, you must rethrow retryable exceptions cus
-            //catch everything and only return true, then @Retryable will not retry
+            //If error is 500 or timeout:
+            //    rethrow it
+            //    Spring Retry will call executeWithRetry again
+            //But because currentIndex already increased, the next retry uses next NIN.
             if (isRetryableException(exception)) {
                 logger.warn("Retryable error for jobName={} nin={} errorCode={} message={}",
                         jobName,
