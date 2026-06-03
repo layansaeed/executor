@@ -17,8 +17,6 @@ public class BeanJob {
     private final EntityDefinitionRegistry registry;
     private final Config.PropertySourceConfig propertySourceConfig;
 
-//    private volatile boolean jobRunning;
-//    private volatile boolean reloadPending;
 
     private boolean jobRunning;
     private boolean reloadPending;

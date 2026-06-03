@@ -34,7 +34,6 @@ public class RetryablePageExecutorService {
 
     /**
      * Executes API calls using a list of NINs.
-     * <p>
      * If retryable error happens, Spring Retry calls this method again.
      * Because currentIndex is already increased, the next retry uses the next NIN.
      */

@@ -20,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -38,16 +37,6 @@ public class BeneficiaryBatchProcessorService {
     private final EntityDefinitionRegistry entityDefinitionRegistry;
     private final GenericEntityRepository genericEntityRepository;
 
-    /**
-     * Creates the service with required dependencies and executor.
-     *
-     * @param databaseChunkSize number of records per page
-     * @param rangeChunkSize number of values per range chunk
-     * @param beneficiaryRepository repository for beneficiary records
-     * @param dynamicCallService service used to call external API
-     * @param entityDefinitionRegistry registry for entity definitions
-     * @param genericEntityRepository repository for dynamic insert operations
-     */
     public BeneficiaryBatchProcessorService(
             @Value("${job.db.chunk}") int databaseChunkSize,
             @Value("${job.range.chunk}") long rangeChunkSize,
@@ -66,11 +55,11 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Processes all records within the given range.
+     * Processes all beneficiaries within a specific NIN row range.
      *
-     * @param jobName job name used to load configuration
-     * @param start range start value
-     * @param end range end value
+     * @param jobName job name used for processing
+     * @param start range start
+     * @param end range end
      */
     public void processByRange(String jobName,
                                Long start,
@@ -111,12 +100,12 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Processes one range chunk page by page.
+     * Processes one range window page by page.
      *
      * @param jobName job name used for processing
-     * @param entityDefinition entity definition for the target table
-     * @param rangeStart current range chunk start
-     * @param rangeEnd current range chunk end
+     * @param entityDefinition entity definition for target table
+     * @param rangeStart range window start
+     * @param rangeEnd range window end
      */
     private void processChunk(String jobName,
                               EntityDefinition entityDefinition,
@@ -190,9 +179,20 @@ public class BeneficiaryBatchProcessorService {
                         return toEntityRows(entityDefinition, responses);
 
                     } catch (MaxRetryAttemptsReachedException exception) {
+                        List<Map<String, Object>> failedRows =
+                                toEntityRows(entityDefinition, exception.getResponses());
+
+                        saveRows(jobName, entityDefinition, pageNumber, failedRows);
+
+                        logger.warn("Max retry attempts reached for jobName={} in page={}. Saved {} failed row(s), stopping job.",
+                                jobName,
+                                pageNumber,
+                                failedRows.size());
+
                         throw exception;
 
                     } catch (Exception exception) {
+                       // if (exception instanceof MaxRetryAttemptsReachedException maxRetryException) {}
                         logger.error("Failed processing page={} for jobName={}. Error={}",
                                 pageNumber,
                                 jobName,
@@ -203,36 +203,15 @@ public class BeneficiaryBatchProcessorService {
                     }
                 }, executorService);
 
-        try {
-            List<Map<String, Object>> pageResults = pageFuture.join();
-            saveRows(jobName, entityDefinition, pageNumber, pageResults);
+        List<Map<String, Object>> pageResults = pageFuture.join();
 
-        } catch (CompletionException exception) {
-            MaxRetryAttemptsReachedException maxRetryException =
-                    getMaxRetryAttemptsReachedException(exception);
-
-            if (maxRetryException == null) {
-                throw exception;
-            }
-
-            List<Map<String, Object>> failedRows =
-                    toEntityRows(entityDefinition, maxRetryException.getResponses());
-
-            saveRows(jobName, entityDefinition, pageNumber, failedRows);
-
-            logger.error("Max retry attempts reached for jobName={} in page={}. Current page rows saved, stopping job.",
-                    jobName,
-                    pageNumber,
-                    maxRetryException);
-
-            throw maxRetryException;
-        }
+        saveRows(jobName, entityDefinition, pageNumber, pageResults);
     }
 
     /**
-     * Processes all beneficiaries without using a range.
+     * Processes all beneficiaries without range filtering.
      *
-     * @param jobName job name used to load configuration
+     * @param jobName job name used for processing
      */
     public void processAllBeneficiaries(String jobName) {
         validateJobName(jobName);
@@ -247,10 +226,10 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Processes all beneficiaries page by page.
+     * Fetches and processes all beneficiaries page by page.
      *
      * @param jobName job name used for processing
-     * @param entityDefinition entity definition for the target table
+     * @param entityDefinition entity definition for target table
      */
     private void fetchAndProcessAllPages(String jobName,
                                          EntityDefinition entityDefinition) {
@@ -279,7 +258,10 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Extracts NINs from the current page.
+     * Extracts NIN values from the current page.
+     *
+     * @param beneficiaryPage current page
+     * @return list of NINs
      */
     private List<Long> getNins(Page<BeneficiaryEntity> beneficiaryPage) {
         List<Long> nins = new ArrayList<>();
@@ -292,7 +274,11 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Maps API response list to entity rows.
+     * Converts API responses to entity rows.
+     *
+     * @param entityDefinition entity definition
+     * @param responses API responses
+     * @return mapped rows
      */
     private List<Map<String, Object>> toEntityRows(EntityDefinition entityDefinition,
                                                    List<Map<String, Object>> responses) {
@@ -310,11 +296,11 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Maps API response values to entity fields.
+     * Maps one API response to one DB row based on XML field mapping.
      *
-     * @param entityDefinition entity definition that contains field mapping
-     * @param response API response body
-     * @return mapped row
+     * @param entityDefinition entity definition
+     * @param response API response
+     * @return mapped DB row
      */
     private Map<String, Object> toEntityRow(EntityDefinition entityDefinition,
                                             Map<String, Object> response) {
@@ -328,7 +314,12 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Saves rows if the list is not empty.
+     * Saves rows to the target table if rows exist.
+     *
+     * @param jobName job name used for logging
+     * @param entityDefinition entity definition
+     * @param pageNumber current page number
+     * @param rows rows to save
      */
     private void saveRows(String jobName,
                           EntityDefinition entityDefinition,
@@ -347,26 +338,9 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Finds MaxRetryAttemptsReachedException inside CompletionException chain.
-     */
-    private MaxRetryAttemptsReachedException getMaxRetryAttemptsReachedException(Throwable throwable) {
-        Throwable current = throwable;
-
-        while (current != null) {
-            if (current instanceof MaxRetryAttemptsReachedException maxRetryException) {
-                return maxRetryException;
-            }
-
-            current = current.getCause();
-        }
-
-        return null;
-    }
-
-    /**
-     * Validates the job name.
+     * Validates job name.
      *
-     * @param jobName job name to validate
+     * @param jobName job name
      */
     private void validateJobName(String jobName) {
         if (jobName == null || jobName.trim().isEmpty()) {
@@ -375,10 +349,10 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Validates the start and end range values.
+     * Validates range values.
      *
-     * @param start range start value
-     * @param end range end value
+     * @param start range start
+     * @param end range end
      */
     private void validateRange(Long start,
                                Long end) {
@@ -392,7 +366,7 @@ public class BeneficiaryBatchProcessorService {
     }
 
     /**
-     * Shuts down the executor service before bean destruction.
+     * Shuts down executor service.
      */
     @PreDestroy
     public void shutdown() {
