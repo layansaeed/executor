@@ -198,7 +198,25 @@ public class BeneficiaryBatchProcessorService {
                         throw exception;
 
                     } catch (Exception exception) {
-                       // if (exception instanceof MaxRetryAttemptsReachedException maxRetryException) {}
+//                        if (exception instanceof MaxRetryAttemptsReachedException maxRetryException) {
+//                            // get failed responses from exception
+//                            List<Map<String, Object>> failedRows =
+//                                    toEntityRows(entityDefinition, maxRetryException.getResponses());
+//
+//                            //    map them to DB rows
+//                            //    save them into DB (save current page)
+//                            saveRows(jobName, entityDefinition, pageNumber, failedRows);
+//
+//                            logger.warn("Max retry attempts reached for jobName={} in page={}. Saved {} failed row(s), stopping job.",
+//                                    jobName,
+//                                    pageNumber,
+//                                    failedRows.size());
+//
+//                            //throw exception again to stop the whole job
+//                            //then kill the job, do not continue next page & do not continue next range
+//                            throw maxRetryException;
+//
+//                        }
                         logger.error("Failed processing page={} for jobName={}. Error={}",
                                 pageNumber,
                                 jobName,

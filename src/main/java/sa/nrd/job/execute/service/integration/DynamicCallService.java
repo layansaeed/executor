@@ -78,8 +78,14 @@ public class DynamicCallService {
 
         } catch (MaxRetryAttemptsReachedException exception) {
             throw exception;
+            //do not handle here
+            //send it back to processPage to save failed rows then job stops
 
         } catch (Exception exception) {
+
+//            if (exception instanceof MaxRetryAttemptsReachedException maxRetryException) {
+//                throw maxRetryException;
+//            }
             logger.debug("Failed before/while calling APIs for jobName [{}]. Error [{}]",
                     jobName,
                     exception.getMessage());
